@@ -2,53 +2,102 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>残業シミュレーター（控除22%で調整）</title>
+  <title>残業シミュレーター（デザイン改良版）</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body {
-      font-family: sans-serif;
-      padding: 20px;
-      max-width: 900px;
-      margin: auto;
+      font-family: 'Noto Sans JP', sans-serif;
       background-color: #fffce8;
+      margin: 0;
+      padding: 20px;
     }
-    h1 { font-size: 1.5em; }
-    label, output, select { font-size: 1.2em; display: block; margin-top: 10px; }
-    .result, .info, .warning { font-size: 1.2em; margin-top: 20px; font-weight: bold; }
-    .warning { color: darkred; }
-    table { border-collapse: collapse; margin-top: 20px; width: 100%; }
-    th, td { border: 1px solid #ccc; padding: 6px; text-align: center; }
+    h1 {
+      font-size: 1.8em;
+      margin-bottom: 10px;
+    }
+    .flex-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 15px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+      flex: 1 1 250px;
+      text-align: center;
+    }
+    .card h2 { font-size: 1.2em; margin-bottom: 10px; }
+    .net { color: #008000; }
+    .gross { color: #555; }
+    .annual { color: #b8860b; }
+    .overtime { color: #007acc; }
+    .warning {
+      color: darkred;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+    .controls {
+      margin: 20px 0;
+    }
+    canvas {
+      margin-top: 30px;
+      background: #fff;
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.1);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 30px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: center;
+    }
     th { background-color: #f0f0f0; }
     .workday { background-color: #e0ffe0; }
     .weekend { background-color: #ffe0e0; }
   </style>
 </head>
 <body>
-  <h1>残業シミュレーター（控除22%で調整）</h1>
+  <h1>残業時間最適マン（デザイン改良版）</h1>
 
-  <label for="baseSalary">あなたの総支給基本給（円）:</label>
-  <input type="number" id="baseSalary" value="350000" min="0" step="1000">
+  <div class="controls">
+    <label for="baseSalary">基本給（円）:</label>
+    <input type="number" id="baseSalary" value="350000" step="1000">
+    <label for="hours">残業時間（h）: <output id="hourOutput">10.5</output></label>
+    <input type="range" id="hours" min="0" max="50" step="0.5" value="10.5">
+  </div>
 
-  <label for="prefecture">居住地（都道府県）:</label>
-  <select id="prefecture">
-    <option value="tokyo">東京都</option>
-    <option value="osaka">大阪府</option>
-    <option value="kanagawa">神奈川県</option>
-    <option value="aichi">愛知県</option>
-    <option value="other">その他</option>
-  </select>
-
-  <label for="hours">残業時間（合計・時間）: <output id="hourOutput">10.5</output> 時間</label>
-  <input type="range" id="hours" min="0" max="50" step="0.5" value="10.5">
-
-  <div class="result">
-    手取り額: <span id="netPay">292,941</span> 円<br>
-    総支給額: <span id="grossPay">377,342</span> 円
+  <div class="flex-container">
+    <div class="card">
+      <h2>手取り額</h2>
+      <div class="net" id="netPay">292,941 円</div>
+    </div>
+    <div class="card">
+      <h2>総支給額</h2>
+      <div class="gross" id="grossPay">377,342 円</div>
+    </div>
+    <div class="card">
+      <h2>残業時間</h2>
+      <div class="overtime" id="overtimeLabel">10.5 時間</div>
+    </div>
+    <div class="card">
+      <h2>推定年収</h2>
+      <div class="annual" id="annualNetPay">3,515,292 円／年</div>
+    </div>
   </div>
 
   <div class="info" id="gradeInfo"></div>
   <div class="warning" id="warningMessage"></div>
 
-  <h2>月間カレンダー（平日のみ残業あり）</h2>
+  <canvas id="netPayChart" width="800" height="400"></canvas>
+
+  <h2>月間カレンダー（平日のみ残業配分）</h2>
   <table id="calendar">
     <thead>
       <tr><th>日</th><th>月</th><th>火</th><th>水</th><th>木</th><th>金</th><th>土</th></tr>
@@ -57,6 +106,18 @@
   </table>
 
   <script>
+    const baseSalaryInput = document.getElementById('baseSalary');
+    const hoursSlider = document.getElementById('hours');
+    const hourOutput = document.getElementById('hourOutput');
+    const netPayDisplay = document.getElementById('netPay');
+    const grossPayDisplay = document.getElementById('grossPay');
+    const annualNetPayDisplay = document.getElementById('annualNetPay');
+    const gradeInfo = document.getElementById('gradeInfo');
+    const warningMessage = document.getElementById('warningMessage');
+    const overtimeLabel = document.getElementById('overtimeLabel');
+    const calendarBody = document.getElementById('calendar-body');
+    const ctx = document.getElementById('netPayChart').getContext('2d');
+
     const overtimeRate = 2604;
     const insuranceTiers = [
       { threshold: 0, additionalDeductions: 0, label: '34等級' },
@@ -65,19 +126,7 @@
       { threshold: 415000, additionalDeductions: 6000, label: '37等級' }
     ];
 
-    const baseSalaryInput = document.getElementById('baseSalary');
-    const prefectureInput = document.getElementById('prefecture');
-    const hoursSlider = document.getElementById('hours');
-    const hourOutput = document.getElementById('hourOutput');
-    const netPayDisplay = document.getElementById('netPay');
-    const grossPayDisplay = document.getElementById('grossPay');
-    const gradeInfo = document.getElementById('gradeInfo');
-    const warningMessage = document.getElementById('warningMessage');
-    const calendarBody = document.getElementById('calendar-body');
-
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = today.getMonth();
+    let netPayChart;
 
     function calculateTier(grossPay) {
       let currentTier = insuranceTiers[0];
@@ -95,6 +144,9 @@
 
     function generateCalendar(overtimeHours) {
       calendarBody.innerHTML = '';
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = today.getMonth();
       const firstDay = new Date(year, month, 1).getDay();
       const daysInMonth = new Date(year, month + 1, 0).getDate();
 
@@ -129,46 +181,80 @@
       }
     }
 
+    function updateGraph(baseSalary) {
+      const hours = [], netPays = [];
+      for (let h = 0; h <= 30; h++) {
+        const overtimePay = h * overtimeRate;
+        const gross = baseSalary + overtimePay;
+        const deductions = gross * 0.22;
+        const net = gross - deductions;
+        hours.push(h);
+        netPays.push(Math.round(net));
+      }
+
+      if (netPayChart) netPayChart.destroy();
+      netPayChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: hours,
+          datasets: [{
+            label: '手取り額（円）',
+            data: netPays,
+            borderColor: 'rgba(75, 192, 192, 1)',
+            backgroundColor: 'rgba(255, 99, 132, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.3
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: true } },
+          scales: {
+            x: { title: { display: true, text: '残業時間（h）' } },
+            y: { title: { display: true, text: '手取り額（円）' } }
+          }
+        }
+      });
+    }
+
     function updateDisplay() {
       const baseSalary = parseFloat(baseSalaryInput.value);
       const overtimeHours = parseFloat(hoursSlider.value);
       hourOutput.textContent = overtimeHours.toFixed(1);
+      overtimeLabel.textContent = `${overtimeHours.toFixed(1)} 時間`;
 
       const overtimePay = overtimeHours * overtimeRate;
       const grossPay = baseSalary + overtimePay;
-      grossPayDisplay.textContent = grossPay.toLocaleString();
-
-      const { currentTier, nextTier } = calculateTier(grossPay);
       const deductions = grossPay * 0.22;
       const netPay = grossPay - deductions;
-      netPayDisplay.textContent = Math.round(netPay).toLocaleString();
 
+      grossPayDisplay.textContent = Math.round(grossPay).toLocaleString() + ' 円';
+      netPayDisplay.textContent = Math.round(netPay).toLocaleString() + ' 円';
+      annualNetPayDisplay.textContent = Math.round(netPay * 12).toLocaleString() + ' 円／年';
+
+      const { currentTier, nextTier } = calculateTier(grossPay);
       if (nextTier) {
         const diff = nextTier.threshold - grossPay;
         gradeInfo.innerHTML = `現在の等級: <strong>${currentTier.label}</strong><br>
-          あと <strong>${diff.toLocaleString()}</strong> 円で <strong>${nextTier.label}</strong> に上がり、
-          保険料が約 <strong>+${nextTier.additionalDeductions.toLocaleString()}</strong> 円増えます。`;
+          あと <strong>${diff.toLocaleString()}</strong> 円で <strong>${nextTier.label}</strong> に上がり、保険料が約 <strong>+${nextTier.additionalDeductions.toLocaleString()}</strong> 円増えます。`;
       } else {
-        gradeInfo.innerHTML = `現在の等級: <strong>${currentTier.label}</strong><br>
-          これ以上は等級は上がりません。`;
+        gradeInfo.innerHTML = `現在の等級: <strong>${currentTier.label}</strong><br>これ以上は等級は上がりません。`;
       }
 
-      const testHours = Math.max(0, overtimeHours - 0.5);
-      const testOvertimePay = testHours * overtimeRate;
-      const testGross = baseSalary + testOvertimePay;
+      const testGross = baseSalary + Math.max(0, overtimeHours - 0.5) * overtimeRate;
       const testNet = testGross - (testGross * 0.22);
-
       if (netPay < testNet) {
-        warningMessage.innerHTML = `※ご注意：現在の残業時間では、保険料の増加により手取りが減っています。<br>→ この残業は控えた方がよい可能性があります。`;
+        warningMessage.innerHTML = `⚠️ 現在の残業時間では、保険料の増加により手取りが減っています。<br>→ この残業は控えた方がよい可能性があります。`;
       } else {
         warningMessage.innerHTML = '';
       }
 
       generateCalendar(overtimeHours);
+      updateGraph(baseSalary);
     }
 
     baseSalaryInput.addEventListener('input', updateDisplay);
-    prefectureInput.addEventListener('change', updateDisplay);
     hoursSlider.addEventListener('input', updateDisplay);
     updateDisplay();
   </script>
